@@ -21,5 +21,3 @@ ExternalProject_Add(concord
         INSTALL_COMMAND ${CMAKE_COMMAND} -E env PREFIX=<INSTALL_DIR> ${MAKE_EXECUTABLE} -j -C <SOURCE_DIR> install
         BUILD_BYPRODUCTS ${CONCORD_LIBRARY}
         )
-
-ExternalProject_Get_property(concord install_dir)
