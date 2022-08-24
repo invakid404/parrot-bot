@@ -167,6 +167,10 @@ void on_interaction(struct discord* client,
 }
 
 void on_message(struct discord* client, const struct discord_message* event) {
+    if (event->author->bot) {
+        return;
+    }
+
     char* response_value;
 
     char* error = database_read(&g_database, event->content, &response_value);
