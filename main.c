@@ -58,6 +58,7 @@ void on_ready(struct discord* client, const struct discord_ready* event) {
 
 void handle_add_response_subcommand(
     struct discord* client,
+    const struct discord_interaction* event,
     struct discord_application_command_interaction_data_options* options) {
     char *key, *value;
 
@@ -78,11 +79,59 @@ void handle_add_response_subcommand(
         }
     }
 
-    // TODO: respond
+    char* existing_value;
+    size_t existing_value_length;
+
+    char* error = database_read(&g_database, key, &existing_value, &existing_value_length);
+    if (error != NULL) {
+        fprintf(stderr, "failed to read key from database: %s\n", error);
+
+        exit(1);
+    }
+
+    if (existing_value != NULL) {
+        database_free(existing_value);
+
+        char message[DISCORD_MAX_MESSAGE_LEN];
+        snprintf(message, sizeof(message), "Response with key `%s` already exists!", key);
+
+        struct discord_interaction_response response = {
+            .type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+            .data = &(struct discord_interaction_callback_data){
+                .content = message,
+                .flags = DISCORD_MESSAGE_EPHEMERAL,
+            }
+        };
+
+        discord_create_interaction_response(client, event->id, event->token, &response, NULL);
+
+        return;
+    }
+
+    error = database_write(&g_database, key, value);
+    if (error != NULL) {
+        fprintf(stderr, "failed to write response to database: %s\n", error);
+
+        exit(1);
+    }
+
+    char message[DISCORD_MAX_MESSAGE_LEN];
+    snprintf(message, sizeof(message), "Successfully added key `%s`!", key);
+
+    struct discord_interaction_response response = {
+        .type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
+        .data = &(struct discord_interaction_callback_data){
+            .content = message,
+            .flags = DISCORD_MESSAGE_EPHEMERAL,
+        }
+    };
+
+    discord_create_interaction_response(client, event->id, event->token, &response, NULL);
 }
 
 void handle_get_response_subcommand(
     struct discord* client,
+    const struct discord_interaction* event,
     struct discord_application_command_interaction_data_options* options) {
     // TODO: respond
 }
@@ -93,15 +142,14 @@ void handle_responses_command(struct discord* client,
         struct discord_application_command_interaction_data_option option =
             event->data->options->array[i];
 
-        printf("looking at option %s\n", option.name);
         if (!strcmp(option.name, "add")) {
-            handle_add_response_subcommand(client, option.options);
+            handle_add_response_subcommand(client, event, option.options);
 
             return;
         }
 
         if (!strcmp(option.name, "get")) {
-            handle_get_response_subcommand(client, option.options);
+            handle_get_response_subcommand(client, event, option.options);
 
             return;
         }
@@ -137,27 +185,6 @@ int main(void) {
 
     atexit(cleanup);
     signal(SIGTERM, (__sighandler_t)signal_handler);
-
-    error = database_write(&g_database, "hello", 5, "world", 5);
-    if (error != NULL) {
-        fprintf(stderr, "failed to write to database: %s\n", error);
-
-        return 1;
-    }
-
-    char* value;
-    size_t value_length;
-
-    error = database_read(&g_database, "hello", 5, &value, &value_length);
-    if (error != NULL) {
-        fprintf(stderr, "failed to read from database: %s\n", error);
-
-        return 1;
-    }
-
-    printf("hello: %.*s\n", (int)value_length, value);
-
-    database_free(value);
 
     struct discord* client = discord_init(bot_token);
 
