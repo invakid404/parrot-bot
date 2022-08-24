@@ -1,5 +1,6 @@
 #include "database.h"
 #include <stdbool.h>
+#include <string.h>
 
 char* database_open(struct database* database) {
     char* error = NULL;
@@ -19,17 +20,13 @@ char* database_open(struct database* database) {
     return error;
 }
 
-char* database_write(struct database* database,
-                     char* key,
-                     size_t key_length,
-                     char* value,
-                     size_t value_length) {
+char* database_write(struct database* database, char* key, char* value) {
     char* error = NULL;
 
     leveldb_writeoptions_t* write_options = leveldb_writeoptions_create();
 
-    leveldb_put(database->leveldb, write_options, key, key_length, value,
-                value_length, &error);
+    leveldb_put(database->leveldb, write_options, key, strlen(key), value,
+                strlen(value), &error);
     if (error != NULL) {
         return error;
     }
@@ -42,15 +39,14 @@ char* database_write(struct database* database,
 
 char* database_read(struct database* database,
                     char* key,
-                    size_t key_length,
                     char** output,
                     size_t* output_length) {
     char* error = NULL;
 
     leveldb_readoptions_t* read_options = leveldb_readoptions_create();
 
-    char* result = leveldb_get(database->leveldb, read_options, key, key_length,
-                               output_length, &error);
+    char* result = leveldb_get(database->leveldb, read_options, key,
+                               strlen(key), output_length, &error);
     if (error != NULL) {
         return error;
     }

@@ -8,14 +8,9 @@ struct database {
 };
 
 char* database_open(struct database* database);
-char* database_write(struct database* database,
-                     char* key,
-                     size_t key_length,
-                     char* value,
-                     size_t value_length);
+char* database_write(struct database* database, char* key, char* value);
 char* database_read(struct database* database,
                     char* key,
-                    size_t key_length,
                     char** output,
                     size_t* output_length);
 void database_free(void* data);
