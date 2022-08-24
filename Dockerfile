@@ -7,6 +7,6 @@ RUN apt update && apt install -y build-essential cmake git libcurl4-openssl-dev
 WORKDIR /opt/app
 
 COPY . .
-RUN cmake . && cmake --build .
+RUN cmake -DCMAKE_BUILD_TYPE=Release . && cmake --build . --config Release
 
 ENTRYPOINT ["/opt/app/parrot_bot"]
