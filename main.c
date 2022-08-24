@@ -6,6 +6,7 @@
 #include "database.h"
 
 struct database g_database = {0};
+struct discord* g_client;
 
 void on_ready(struct discord* client, const struct discord_ready* event) {
     u64snowflake application_id = event->application->id;
@@ -171,6 +172,9 @@ void signal_handler(void) {
 
 void cleanup(void) {
     database_close(&g_database);
+
+    discord_cleanup(g_client);
+    ccord_global_cleanup();
 }
 
 int main(void) {
@@ -186,10 +190,11 @@ int main(void) {
     atexit(cleanup);
     signal(SIGTERM, (__sighandler_t)signal_handler);
 
-    struct discord* client = discord_init(bot_token);
+    g_client = discord_init(bot_token);
 
-    discord_set_on_ready(client, &on_ready);
-    discord_set_on_interaction_create(client, &on_interaction);
+    discord_set_on_ready(g_client, &on_ready);
+    discord_set_on_interaction_create(g_client, &on_interaction);
+    discord_set_on_message_create(g_client, &on_message);
 
-    return discord_run(client);
+    return discord_run(g_client);
 }
