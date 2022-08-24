@@ -80,9 +80,8 @@ void handle_add_response_subcommand(
     }
 
     char* existing_value;
-    size_t existing_value_length;
 
-    char* error = database_read(&g_database, key, &existing_value, &existing_value_length);
+    char* error = database_read(&g_database, key, &existing_value);
     if (error != NULL) {
         fprintf(stderr, "failed to read key from database: %s\n", error);
 
@@ -90,20 +89,21 @@ void handle_add_response_subcommand(
     }
 
     if (existing_value != NULL) {
-        database_free(existing_value);
+        free(existing_value);
 
         char message[DISCORD_MAX_MESSAGE_LEN];
-        snprintf(message, sizeof(message), "Response with key `%s` already exists!", key);
+        snprintf(message, sizeof(message),
+                 "Response with key `%s` already exists!", key);
 
         struct discord_interaction_response response = {
             .type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
             .data = &(struct discord_interaction_callback_data){
                 .content = message,
                 .flags = DISCORD_MESSAGE_EPHEMERAL,
-            }
-        };
+            }};
 
-        discord_create_interaction_response(client, event->id, event->token, &response, NULL);
+        discord_create_interaction_response(client, event->id, event->token,
+                                            &response, NULL);
 
         return;
     }
@@ -123,10 +123,10 @@ void handle_add_response_subcommand(
         .data = &(struct discord_interaction_callback_data){
             .content = message,
             .flags = DISCORD_MESSAGE_EPHEMERAL,
-        }
-    };
+        }};
 
-    discord_create_interaction_response(client, event->id, event->token, &response, NULL);
+    discord_create_interaction_response(client, event->id, event->token,
+                                        &response, NULL);
 }
 
 void handle_get_response_subcommand(

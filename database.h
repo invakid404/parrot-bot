@@ -5,14 +5,12 @@
 
 struct database {
     leveldb_t* leveldb;
+    leveldb_options_t* leveldb_options;
 };
 
 char* database_open(struct database* database);
 char* database_write(struct database* database, char* key, char* value);
-char* database_read(struct database* database,
-                    char* key,
-                    char** output,
-                    size_t* output_length);
+char* database_read(struct database* database, char* key, char** output);
 void database_free(void* data);
 void database_close(struct database* database);
 
