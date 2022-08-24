@@ -1,0 +1,92 @@
+name: Build Docker image
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  REGISTRY_USERNAME: ${{ github.actor }}
+  REGISTRY_PASSWORD: ${{ github.token }}
+
+jobs:
+  build-docker-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Get the version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          sep-labels: ","
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:fat
+
+      - name: Download docker-slim
+        run: |
+          mkdir .docker-slim
+          pushd .docker-slim
+
+          curl -L -o ds.tar.gz https://downloads.dockerslim.com/releases/1.37.5/dist_linux.tar.gz
+          tar -xvf ds.tar.gz
+          sudo mv dist_linux/docker-slim /usr/bin/
+          sudo mv dist_linux/docker-slim-sensor /usr/bin/
+
+          popd
+          rm -rf .docker-slim
+
+      - name: Optimize Docker image
+        env:
+          bot_token: ${{ secrets.BOT_TOKEN }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: "latest,${{ steps.get_version.outputs.VERSION }}"
+          labels: ${{ steps.meta.outputs.labels }}
+        run: |
+          tags_args=""
+          labels_args=""
+          IFS=","
+
+          for tag in ${tags}; do
+            tags_args="${tags_args} --tag ${image}:${tag}"
+          done
+
+          for label in ${labels}; do
+            labels_args="${labels_args} --label \"${label}\""
+          done
+
+          command="docker-slim build --target ${image} ${tags_args} ${labels_args} --http-probe=false --continue-after 30 --env PARROT_BOT_TOKEN=\"${bot_token}\""
+          eval " ${command}"
+
+      - name: Push to GHCR
+        env:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: "latest,${{ steps.get_version.outputs.VERSION }}"
+        run: |
+          IFS=","
+          for tag in ${tags}; do
+            docker image push "${image}:${tag}"
+          done
