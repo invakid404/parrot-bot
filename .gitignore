@@ -1,5 +1,12 @@
+.cmake/
+.idea/
+build.ninja
+.ninja_log
+.ninja_deps
 cmake_install.cmake
+cmake-build-*/
 CMakeCache.txt
 CMakeFiles
 Makefile
 parrot_bot
+Testing/
