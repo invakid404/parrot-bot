@@ -166,6 +166,29 @@ void on_interaction(struct discord* client,
     }
 }
 
+void on_message(struct discord* client, const struct discord_message* event) {
+    char* response_value;
+
+    char* error = database_read(&g_database, event->content, &response_value);
+    if (error != NULL) {
+        fprintf(stderr, "failed to read response from database: %s\n", error);
+
+        exit(1);
+    }
+
+    if (response_value == NULL) {
+        return;
+    }
+
+    struct discord_create_message message = {
+        .content = response_value,
+    };
+
+    discord_create_message(client, event->channel_id, &message, NULL);
+
+    free(response_value);
+}
+
 void signal_handler(void) {
     exit(0);
 }
