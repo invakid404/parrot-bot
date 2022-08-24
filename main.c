@@ -1,7 +1,11 @@
 #include <concord/discord.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "database.h"
+
+struct database g_database = {0};
 
 void on_ready(struct discord* client, const struct discord_ready* event) {
     u64snowflake application_id = event->application->id;
@@ -113,8 +117,47 @@ void on_interaction(struct discord* client,
     }
 }
 
+void signal_handler(void) {
+    exit(0);
+}
+
+void cleanup(void) {
+    database_close(&g_database);
+}
+
 int main(void) {
     char* bot_token = getenv("PARROT_BOT_TOKEN");
+
+    char* error = database_open(&g_database);
+    if (error != NULL) {
+        fprintf(stderr, "failed to open database: %s\n", error);
+
+        return 1;
+    }
+
+    atexit(cleanup);
+    signal(SIGTERM, (__sighandler_t)signal_handler);
+
+    error = database_write(&g_database, "hello", 5, "world", 5);
+    if (error != NULL) {
+        fprintf(stderr, "failed to write to database: %s\n", error);
+
+        return 1;
+    }
+
+    char* value;
+    size_t value_length;
+
+    error = database_read(&g_database, "hello", 5, &value, &value_length);
+    if (error != NULL) {
+        fprintf(stderr, "failed to read from database: %s\n", error);
+
+        return 1;
+    }
+
+    printf("hello: %.*s\n", (int)value_length, value);
+
+    database_free(value);
 
     struct discord* client = discord_init(bot_token);
 
