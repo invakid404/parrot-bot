@@ -117,6 +117,10 @@ void database_iterator_seek(struct iterator* iterator, char* key) {
     leveldb_iter_seek(iterator->leveldb_iterator, key, strlen(key));
 }
 
+void database_iterator_seek_to_first(struct iterator* iterator) {
+    leveldb_iter_seek_to_first(iterator->leveldb_iterator);
+}
+
 void database_iterator_key(struct iterator* iterator, char** output) {
     size_t key_length;
 

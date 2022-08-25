@@ -12,6 +12,7 @@ char* database_write(struct database* database, char* key, char* value);
 char* database_read(struct database* database, char* key, char** output);
 struct iterator* database_iterator_create(struct database* database);
 void database_iterator_seek(struct iterator* iterator, char* key);
+void database_iterator_seek_to_first(struct iterator* iterator);
 void database_iterator_key(struct iterator* iterator, char** output);
 void database_iterator_value(struct iterator* iterator, char** output);
 bool database_iterator_valid(struct iterator* iterator);
