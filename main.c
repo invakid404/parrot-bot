@@ -230,6 +230,7 @@ int main(void) {
 
     atexit(cleanup);
     signal(SIGTERM, (__sighandler_t)signal_handler);
+    signal(SIGINT, (__sighandler_t)signal_handler);
 
     g_client = discord_init(bot_token);
 
