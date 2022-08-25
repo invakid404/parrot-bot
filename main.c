@@ -1,9 +1,15 @@
+#include <assert.h>
 #include <concord/discord.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "database.h"
+
+#define PAGE_SIZE 10
+#define PAGINATION_ID_PREFIX "page:"
+#define PAGINATION_PREV_PAGE PAGINATION_ID_PREFIX "prev:"
+#define PAGINATION_NEXT_PAGE PAGINATION_ID_PREFIX "next:"
 
 struct database* g_database;
 struct discord* g_client;
@@ -144,11 +150,139 @@ void handle_add_response_subcommand(
                                         &response, NULL);
 }
 
+void handle_responses_interaction(
+    struct discord* client,
+    const struct discord_interaction* event,
+    struct iterator* iterator,
+    enum discord_interaction_callback_types type) {
+    char embed_description[DISCORD_EMBED_DESCRIPTION_LEN] = {0};
+
+    char* start_key;
+    database_iterator_key(iterator, &start_key);
+
+    struct iterator* backwards_iterator = database_iterator_create(g_database);
+    database_iterator_seek(backwards_iterator, start_key);
+
+    free(start_key);
+
+    int index = 0;
+    for (; database_iterator_valid(iterator) && index < PAGE_SIZE;
+         database_iterator_next(iterator), ++index) {
+        char* key;
+
+        database_iterator_key(iterator, &key);
+
+        if (index > 0) {
+            strcat(embed_description, "\n");
+        }
+
+        if (index % 2 == 0) {
+            strcat(embed_description, "**");
+        }
+
+        strncat(embed_description, key, DISCORD_EMBED_DESCRIPTION_LEN);
+
+        if (index % 2 == 0) {
+            strcat(embed_description, "**");
+        }
+
+        database_free(key);
+    }
+
+    char* next_page_key = NULL;
+    char next_page_id[DISCORD_MAX_MESSAGE_LEN];
+
+    bool has_next_page = database_iterator_valid(iterator);
+    if (has_next_page) {
+        database_iterator_key(iterator, &next_page_key);
+    }
+
+    sprintf(next_page_id, PAGINATION_NEXT_PAGE "%s",
+            has_next_page ? next_page_key : "-");
+
+    if (has_next_page) {
+        free(next_page_key);
+    }
+
+    database_iterator_destroy(iterator);
+
+    for (index = 0;
+         database_iterator_valid(backwards_iterator) && index < PAGE_SIZE;
+         database_iterator_prev(backwards_iterator), ++index) {
+    }
+
+    char* prev_page_key = NULL;
+    char prev_page_id[DISCORD_MAX_MESSAGE_LEN];
+
+    bool has_prev_page = database_iterator_valid(backwards_iterator);
+    if (has_prev_page) {
+        database_iterator_key(backwards_iterator, &prev_page_key);
+    }
+
+    sprintf(prev_page_id, PAGINATION_PREV_PAGE "%s",
+            has_prev_page ? prev_page_key : "-");
+
+    if (has_prev_page) {
+        free(prev_page_key);
+    }
+
+    database_iterator_destroy(backwards_iterator);
+
+    struct discord_embed embeds[] = {{
+        .title = "Responses",
+        .description = embed_description,
+    }};
+
+    struct discord_component buttons[] = {{.type = DISCORD_COMPONENT_BUTTON,
+                                           .label = "<",
+                                           .style = DISCORD_BUTTON_PRIMARY,
+                                           .custom_id = prev_page_id},
+                                          {
+                                              .type = DISCORD_COMPONENT_BUTTON,
+                                              .label = ">",
+                                              .style = DISCORD_BUTTON_PRIMARY,
+                                              .custom_id = next_page_id,
+                                          }};
+
+    struct discord_component components[] = {
+        {.type = DISCORD_COMPONENT_ACTION_ROW,
+         .components = &(struct discord_components){
+             .size = sizeof(buttons) / sizeof(buttons[0]),
+             .array = buttons,
+         }}};
+
+    struct discord_interaction_callback_data callback_data = {
+        .embeds =
+            &(struct discord_embeds){
+                .size = sizeof(embeds) / sizeof(embeds[0]),
+                .array = embeds,
+            },
+        .components =
+            &(struct discord_components){
+                .size = sizeof(components) / sizeof(components[0]),
+                .array = components,
+            },
+        .flags = DISCORD_MESSAGE_EPHEMERAL};
+
+    struct discord_interaction_response response = {
+        .type = type,
+        .data = &callback_data,
+    };
+
+    discord_create_interaction_response(client, event->id, event->token,
+                                        &response, NULL);
+}
+
 void handle_get_response_subcommand(
     struct discord* client,
     const struct discord_interaction* event,
     struct discord_application_command_interaction_data_options* options) {
-    // TODO: respond
+    struct iterator* iterator = database_iterator_create(g_database);
+    database_iterator_seek_to_first(iterator);
+
+    handle_responses_interaction(
+        client, event, iterator,
+        DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE);
 }
 
 void handle_responses_command(struct discord* client,
@@ -171,11 +305,45 @@ void handle_responses_command(struct discord* client,
     }
 }
 
+void handle_pagination(struct discord* client,
+                       const struct discord_interaction* event) {
+    char* target_key = event->data->custom_id + strlen(PAGINATION_PREV_PAGE);
+
+    if (!strcmp(target_key, "-")) {
+        struct discord_interaction_response response = {
+            .type = DISCORD_INTERACTION_DEFERRED_UPDATE_MESSAGE,
+        };
+
+        discord_create_interaction_response(client, event->id, event->token,
+                                            &response, NULL);
+
+        return;
+    }
+
+    struct iterator* iterator = database_iterator_create(g_database);
+    database_iterator_seek(iterator, target_key);
+
+    assert(database_iterator_valid(iterator));
+
+    handle_responses_interaction(client, event, iterator,
+                                 DISCORD_INTERACTION_UPDATE_MESSAGE);
+}
+
 void on_interaction(struct discord* client,
                     const struct discord_interaction* event) {
     if (event->type == DISCORD_INTERACTION_APPLICATION_COMMAND) {
         if (!strcmp(event->data->name, "responses")) {
             handle_responses_command(client, event);
+        }
+
+        return;
+    }
+
+    if (event->type == DISCORD_INTERACTION_MESSAGE_COMPONENT) {
+        if (event->data->component_type == DISCORD_COMPONENT_BUTTON &&
+            !strncmp(event->data->custom_id, PAGINATION_ID_PREFIX,
+                     strlen(PAGINATION_ID_PREFIX))) {
+            handle_pagination(client, event);
         }
     }
 }
@@ -219,9 +387,12 @@ void cleanup(void) {
 }
 
 int main(void) {
+    static_assert(sizeof(PAGINATION_PREV_PAGE) == sizeof(PAGINATION_NEXT_PAGE),
+                  "next and prev page prefixes must be the same length");
+
     char* bot_token = getenv("PARROT_BOT_TOKEN");
     if (bot_token == NULL) {
-        fprintf(stderr, "no bot token provided\n" );
+        fprintf(stderr, "no bot token provided\n");
 
         return 1;
     }
