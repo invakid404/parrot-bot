@@ -3,16 +3,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-char* database_open(struct database* database) {
+struct database {
+    leveldb_t* leveldb;
+    leveldb_options_t* leveldb_options;
+};
+
+char* database_open(struct database** database) {
     char* error = NULL;
 
-    database->leveldb_options = leveldb_options_create();
-    leveldb_options_set_create_if_missing(database->leveldb_options, true);
+    (*database) = malloc(sizeof(database));
 
-    database->leveldb =
-        leveldb_open(database->leveldb_options, "parrot-bot.leveldb", &error);
+    (*database)->leveldb_options = leveldb_options_create();
+    leveldb_options_set_create_if_missing((*database)->leveldb_options, true);
+
+    (*database)->leveldb = leveldb_open((*database)->leveldb_options,
+                                        "parrot-bot.leveldb", &error);
 
     if (error != NULL) {
+        free(*database);
+
         return error;
     }
 
@@ -86,4 +95,6 @@ void database_free(void* data) {
 void database_close(struct database* database) {
     leveldb_close(database->leveldb);
     leveldb_options_destroy(database->leveldb_options);
+
+    free(database);
 }

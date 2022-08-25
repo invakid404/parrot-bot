@@ -5,7 +5,7 @@
 #include <string.h>
 #include "database.h"
 
-struct database g_database = {0};
+struct database* g_database;
 struct discord* g_client;
 
 void on_ready(struct discord* client, const struct discord_ready* event) {
@@ -96,7 +96,7 @@ void handle_add_response_subcommand(
 
     char* existing_value;
 
-    char* error = database_read(&g_database, key, &existing_value);
+    char* error = database_read(g_database, key, &existing_value);
     if (error != NULL) {
         fprintf(stderr, "failed to read key from database: %s\n", error);
 
@@ -123,7 +123,7 @@ void handle_add_response_subcommand(
         return;
     }
 
-    error = database_write(&g_database, key, value);
+    error = database_write(g_database, key, value);
     if (error != NULL) {
         fprintf(stderr, "failed to write response to database: %s\n", error);
 
@@ -187,7 +187,7 @@ void on_message(struct discord* client, const struct discord_message* event) {
 
     char* response_value;
 
-    char* error = database_read(&g_database, event->content, &response_value);
+    char* error = database_read(g_database, event->content, &response_value);
     if (error != NULL) {
         fprintf(stderr, "failed to read response from database: %s\n", error);
 
@@ -212,7 +212,7 @@ void signal_handler(void) {
 }
 
 void cleanup(void) {
-    database_close(&g_database);
+    database_close(g_database);
 
     discord_cleanup(g_client);
     ccord_global_cleanup();

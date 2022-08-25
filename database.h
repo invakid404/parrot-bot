@@ -3,12 +3,9 @@
 
 #include <leveldb/c.h>
 
-struct database {
-    leveldb_t* leveldb;
-    leveldb_options_t* leveldb_options;
-};
+struct database;
 
-char* database_open(struct database* database);
+char* database_open(struct database** database);
 char* database_write(struct database* database, char* key, char* value);
 char* database_read(struct database* database, char* key, char** output);
 void database_free(void* data);
