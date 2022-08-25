@@ -54,7 +54,9 @@ char* database_read(struct database* database, char* key, char** output) {
 
     leveldb_readoptions_destroy(read_options);
 
-    if (error != NULL) {
+    if (error != NULL || result == NULL) {
+        *output = NULL;
+
         return error;
     }
 
