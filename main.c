@@ -39,7 +39,7 @@ void on_ready(struct discord* client, const struct discord_ready* event) {
          .type = DISCORD_APPLICATION_OPTION_SUB_COMMAND,
          .options = &(struct discord_application_command_options){0}}};
 
-    struct discord_create_global_application_command application_commands[] = {
+    struct discord_application_command application_commands[] = {
         {.name = "responses",
          .description = "View and manage responses",
          .type = DISCORD_APPLICATION_CHAT_INPUT,
@@ -51,9 +51,23 @@ void on_ready(struct discord* client, const struct discord_ready* event) {
     int application_commands_amount =
         sizeof(application_commands) / sizeof(application_commands[0]);
 
-    for (int i = 0; i < application_commands_amount; ++i) {
-        discord_create_global_application_command(
-            client, application_id, &application_commands[0], NULL);
+    struct discord_application_commands existing_commands = {0};
+
+    struct discord_ret_application_commands existing_commands_response = {
+        .sync = &existing_commands,
+    };
+
+    discord_get_global_application_commands(client, application_id,
+                                            &existing_commands_response);
+
+    if (existing_commands.size != application_commands_amount) {
+        struct discord_application_commands commands = {
+            .size = application_commands_amount,
+            .array = application_commands,
+        };
+
+        discord_bulk_overwrite_global_application_commands(
+            client, application_id, &commands, NULL);
     }
 }
 
