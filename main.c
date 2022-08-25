@@ -233,6 +233,8 @@ int main(void) {
 
     g_client = discord_init(bot_token);
 
+    discord_add_intents(g_client, DISCORD_GATEWAY_MESSAGE_CONTENT);
+
     discord_set_on_ready(g_client, &on_ready);
     discord_set_on_interaction_create(g_client, &on_interaction);
     discord_set_on_message_create(g_client, &on_message);
