@@ -220,6 +220,11 @@ void cleanup(void) {
 
 int main(void) {
     char* bot_token = getenv("PARROT_BOT_TOKEN");
+    if (bot_token == NULL) {
+        fprintf(stderr, "no bot token provided\n" );
+
+        return 1;
+    }
 
     char* error = database_open(&g_database);
     if (error != NULL) {
