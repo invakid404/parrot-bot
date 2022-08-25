@@ -14,7 +14,7 @@ set(CONCORD_LIBRARY "${CONCORD_LIBRARY}" PARENT_SCOPE)
 
 ExternalProject_Add(concord
         GIT_REPOSITORY https://github.com/Cogmasters/concord.git
-        GIT_TAG master
+        GIT_TAG dev
         UPDATE_DISCONNECTED true
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ${CMAKE_COMMAND} -E env CFLAGS="-DCCORD_SIGINTCATCH" ${MAKE_EXECUTABLE} -j -C <SOURCE_DIR>
