@@ -108,7 +108,7 @@ void handle_add_response_subcommand(
 
         char message[DISCORD_MAX_MESSAGE_LEN];
         snprintf(message, sizeof(message),
-                 "Response with key `%s` already exists!", key);
+                 "Response with key %s already exists!", key);
 
         struct discord_interaction_response response = {
             .type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
@@ -131,7 +131,7 @@ void handle_add_response_subcommand(
     }
 
     char message[DISCORD_MAX_MESSAGE_LEN];
-    snprintf(message, sizeof(message), "Successfully added key `%s`!", key);
+    snprintf(message, sizeof(message), "Successfully added key %s!", key);
 
     struct discord_interaction_response response = {
         .type = DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE,
