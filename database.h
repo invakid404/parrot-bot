@@ -17,6 +17,7 @@ void database_iterator_key(struct iterator* iterator, char** output);
 void database_iterator_value(struct iterator* iterator, char** output);
 bool database_iterator_valid(struct iterator* iterator);
 void database_iterator_next(struct iterator* iterator);
+void database_iterator_prev(struct iterator* iterator);
 void database_iterator_destroy(struct iterator* iterator);
 void database_free(void* data);
 void database_close(struct database* database);

@@ -147,6 +147,10 @@ void database_iterator_next(struct iterator* iterator) {
     leveldb_iter_next(iterator->leveldb_iterator);
 }
 
+void database_iterator_prev(struct iterator* iterator) {
+    leveldb_iter_prev(iterator->leveldb_iterator);
+}
+
 void database_iterator_destroy(struct iterator* iterator) {
     leveldb_iter_destroy(iterator->leveldb_iterator);
 
