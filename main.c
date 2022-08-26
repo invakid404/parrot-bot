@@ -1,17 +1,19 @@
-#include <assert.h>
 #include <concord/discord.h>
 #include <signal.h>
+#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "database.h"
+#include "init_sql.h"
+
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 #define PAGE_SIZE 10
 #define PAGINATION_ID_PREFIX "page:"
-#define PAGINATION_PREV_PAGE PAGINATION_ID_PREFIX "prev:"
-#define PAGINATION_NEXT_PAGE PAGINATION_ID_PREFIX "next:"
 
-struct database* g_database;
+#define DISCORD_CUSTOM_ID_LENGTH (100 + 1)
+
+sqlite3* g_database;
 struct discord* g_client;
 
 void on_ready(struct discord* client, const struct discord_ready* event) {
@@ -100,18 +102,23 @@ void handle_add_response_subcommand(
         }
     }
 
-    char* existing_value;
+    const char* insert_query =
+        "INSERT INTO `responses` (`key`, `value`) VALUES (?, ?)";
 
-    char* error = database_read(g_database, key, &existing_value);
-    if (error != NULL) {
-        fprintf(stderr, "failed to read key from database: %s\n", error);
+    sqlite3_stmt* insert_statement;
+    sqlite3_prepare_v2(g_database, insert_query, (int)strlen(insert_query),
+                       &insert_statement, NULL);
 
-        exit(1);
-    }
+    sqlite3_bind_text(insert_statement, 1, key, (int)strlen(key),
+                      SQLITE_STATIC);
+    sqlite3_bind_text(insert_statement, 2, value, (int)strlen(value),
+                      SQLITE_STATIC);
 
-    if (existing_value != NULL) {
-        free(existing_value);
+    int result = sqlite3_step(insert_statement);
 
+    sqlite3_finalize(insert_statement);
+
+    if (result == SQLITE_CONSTRAINT) {
         char message[DISCORD_MAX_MESSAGE_LEN];
         snprintf(message, sizeof(message),
                  "Response with key %s already exists!", key);
@@ -129,13 +136,6 @@ void handle_add_response_subcommand(
         return;
     }
 
-    error = database_write(g_database, key, value);
-    if (error != NULL) {
-        fprintf(stderr, "failed to write response to database: %s\n", error);
-
-        exit(1);
-    }
-
     char message[DISCORD_MAX_MESSAGE_LEN];
     snprintf(message, sizeof(message), "Successfully added key %s!", key);
 
@@ -150,28 +150,24 @@ void handle_add_response_subcommand(
                                         &response, NULL);
 }
 
-void handle_responses_interaction(
-    struct discord* client,
-    const struct discord_interaction* event,
-    struct iterator* iterator,
-    enum discord_interaction_callback_types type) {
+void handle_responses_interaction(struct discord* client,
+                                  const struct discord_interaction* event,
+                                  enum discord_interaction_callback_types type,
+                                  int page) {
+    const char* get_page_query =
+        "SELECT `key` FROM `responses` LIMIT ? OFFSET ?";
+
+    sqlite3_stmt* get_page_statement;
+    sqlite3_prepare_v2(g_database, get_page_query, (int)strlen(get_page_query),
+                       &get_page_statement, NULL);
+
+    sqlite3_bind_int(get_page_statement, 1, PAGE_SIZE);
+    sqlite3_bind_int(get_page_statement, 2, page * PAGE_SIZE);
+
     char embed_description[DISCORD_EMBED_DESCRIPTION_LEN] = {0};
 
-    char* start_key;
-    database_iterator_key(iterator, &start_key);
-
-    struct iterator* backwards_iterator = database_iterator_create(g_database);
-    database_iterator_seek(backwards_iterator, start_key);
-
-    free(start_key);
-
-    int index = 0;
-    for (; database_iterator_valid(iterator) && index < PAGE_SIZE;
-         database_iterator_next(iterator), ++index) {
-        char* key;
-
-        database_iterator_key(iterator, &key);
-
+    for (int index = 0; sqlite3_step(get_page_statement) == SQLITE_ROW;
+         ++index) {
         if (index > 0) {
             strcat(embed_description, "\n");
         }
@@ -180,68 +176,41 @@ void handle_responses_interaction(
             strcat(embed_description, "**");
         }
 
-        strncat(embed_description, key, DISCORD_EMBED_DESCRIPTION_LEN);
+        strcat(embed_description,
+               (char*)sqlite3_column_text(get_page_statement, 0));
 
         if (index % 2 == 0) {
             strcat(embed_description, "**");
         }
-
-        database_free(key);
     }
 
-    char* next_page_key = NULL;
-    char next_page_id[DISCORD_MAX_MESSAGE_LEN];
+    sqlite3_finalize(get_page_statement);
 
-    bool has_next_page = database_iterator_valid(iterator);
-    if (has_next_page) {
-        database_iterator_key(iterator, &next_page_key);
+    if (strlen(embed_description) <= 0) {
+        handle_responses_interaction(client, event, type, page - 1);
+
+        return;
     }
-
-    sprintf(next_page_id, PAGINATION_NEXT_PAGE "%s",
-            has_next_page ? next_page_key : "-");
-
-    if (has_next_page) {
-        free(next_page_key);
-    }
-
-    database_iterator_destroy(iterator);
-
-    for (index = 0;
-         database_iterator_valid(backwards_iterator) && index < PAGE_SIZE;
-         database_iterator_prev(backwards_iterator), ++index) {
-    }
-
-    char* prev_page_key = NULL;
-    char prev_page_id[DISCORD_MAX_MESSAGE_LEN];
-
-    bool has_prev_page = database_iterator_valid(backwards_iterator);
-    if (has_prev_page) {
-        database_iterator_key(backwards_iterator, &prev_page_key);
-    }
-
-    sprintf(prev_page_id, PAGINATION_PREV_PAGE "%s",
-            has_prev_page ? prev_page_key : "-");
-
-    if (has_prev_page) {
-        free(prev_page_key);
-    }
-
-    database_iterator_destroy(backwards_iterator);
 
     struct discord_embed embeds[] = {{
         .title = "Responses",
         .description = embed_description,
     }};
 
+    char prev_id[DISCORD_CUSTOM_ID_LENGTH], next_id[DISCORD_CUSTOM_ID_LENGTH];
+
+    sprintf(prev_id, PAGINATION_ID_PREFIX "%d", MAX(page - 1, 0));
+    sprintf(next_id, PAGINATION_ID_PREFIX "%d", page + 1);
+
     struct discord_component buttons[] = {{.type = DISCORD_COMPONENT_BUTTON,
                                            .label = "<",
                                            .style = DISCORD_BUTTON_PRIMARY,
-                                           .custom_id = prev_page_id},
+                                           .custom_id = prev_id},
                                           {
                                               .type = DISCORD_COMPONENT_BUTTON,
                                               .label = ">",
                                               .style = DISCORD_BUTTON_PRIMARY,
-                                              .custom_id = next_page_id,
+                                              .custom_id = next_id,
                                           }};
 
     struct discord_component components[] = {
@@ -276,13 +245,9 @@ void handle_responses_interaction(
 void handle_get_response_subcommand(
     struct discord* client,
     const struct discord_interaction* event,
-    struct discord_application_command_interaction_data_options* options) {
-    struct iterator* iterator = database_iterator_create(g_database);
-    database_iterator_seek_to_first(iterator);
-
+    struct discord_application_command_interaction_data_options*) {
     handle_responses_interaction(
-        client, event, iterator,
-        DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE);
+        client, event, DISCORD_INTERACTION_CHANNEL_MESSAGE_WITH_SOURCE, 0);
 }
 
 void handle_responses_command(struct discord* client,
@@ -307,26 +272,11 @@ void handle_responses_command(struct discord* client,
 
 void handle_pagination(struct discord* client,
                        const struct discord_interaction* event) {
-    char* target_key = event->data->custom_id + strlen(PAGINATION_PREV_PAGE);
+    char* page_str = event->data->custom_id + strlen(PAGINATION_ID_PREFIX);
 
-    if (!strcmp(target_key, "-")) {
-        struct discord_interaction_response response = {
-            .type = DISCORD_INTERACTION_DEFERRED_UPDATE_MESSAGE,
-        };
-
-        discord_create_interaction_response(client, event->id, event->token,
-                                            &response, NULL);
-
-        return;
-    }
-
-    struct iterator* iterator = database_iterator_create(g_database);
-    database_iterator_seek(iterator, target_key);
-
-    assert(database_iterator_valid(iterator));
-
-    handle_responses_interaction(client, event, iterator,
-                                 DISCORD_INTERACTION_UPDATE_MESSAGE);
+    handle_responses_interaction(client, event,
+                                 DISCORD_INTERACTION_UPDATE_MESSAGE,
+                                 (int)strtol(page_str, NULL, 10));
 }
 
 void on_interaction(struct discord* client,
@@ -353,26 +303,28 @@ void on_message(struct discord* client, const struct discord_message* event) {
         return;
     }
 
-    char* response_value;
+    const char* select_query =
+        "SELECT `value` FROM `responses` WHERE `key` = ?";
 
-    char* error = database_read(g_database, event->content, &response_value);
-    if (error != NULL) {
-        fprintf(stderr, "failed to read response from database: %s\n", error);
+    sqlite3_stmt* select_statement;
+    sqlite3_prepare_v2(g_database, select_query, (int)strlen(select_query),
+                       &select_statement, NULL);
 
-        exit(1);
+    sqlite3_bind_text(select_statement, 1, event->content,
+                      (int)strlen(event->content), SQLITE_STATIC);
+
+    int result = sqlite3_step(select_statement);
+    if (result == SQLITE_ROW) {
+        char* value = (char*)sqlite3_column_text(select_statement, 0);
+
+        struct discord_create_message message = {
+            .content = value,
+        };
+
+        discord_create_message(client, event->channel_id, &message, NULL);
     }
 
-    if (response_value == NULL) {
-        return;
-    }
-
-    struct discord_create_message message = {
-        .content = response_value,
-    };
-
-    discord_create_message(client, event->channel_id, &message, NULL);
-
-    free(response_value);
+    sqlite3_finalize(select_statement);
 }
 
 void signal_handler(void) {
@@ -380,16 +332,13 @@ void signal_handler(void) {
 }
 
 void cleanup(void) {
-    database_close(g_database);
+    sqlite3_close(g_database);
 
     discord_cleanup(g_client);
     ccord_global_cleanup();
 }
 
 int main(void) {
-    static_assert(sizeof(PAGINATION_PREV_PAGE) == sizeof(PAGINATION_NEXT_PAGE),
-                  "next and prev page prefixes must be the same length");
-
     char* bot_token = getenv("PARROT_BOT_TOKEN");
     if (bot_token == NULL) {
         fprintf(stderr, "no bot token provided\n");
@@ -397,9 +346,24 @@ int main(void) {
         return 1;
     }
 
-    char* error = database_open(&g_database);
-    if (error != NULL) {
-        fprintf(stderr, "failed to open database: %s\n", error);
+    char* database_path = getenv("PARROT_BOT_DATABASE_PATH");
+    if (database_path == NULL) {
+        database_path = "parrot_bot.db";
+    }
+
+    int result = sqlite3_open(database_path, &g_database);
+    if (result != SQLITE_OK) {
+        fprintf(stderr, "failed to open database: %s\n",
+                sqlite3_errstr(result));
+
+        return 1;
+    }
+
+    // Initialize database
+    result = sqlite3_exec(g_database, INIT_SQL, NULL, NULL, NULL);
+    if (result != SQLITE_OK) {
+        fprintf(stderr, "failed to initialize database: %s\n",
+                sqlite3_errstr(result));
 
         return 1;
     }

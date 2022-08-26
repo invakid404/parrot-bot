@@ -1,0 +1,6 @@
+#ifndef PARROT_BOT_INIT_SQL_H
+#define PARROT_BOT_INIT_SQL_H
+
+#cmakedefine INIT_SQL "@INIT_SQL@"
+
+#endif  // PARROT_BOT_INIT_SQL_H
