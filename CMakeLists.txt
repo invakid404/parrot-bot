@@ -15,7 +15,7 @@ find_package(SQLite3)
 
 add_subdirectory(third-party)
 
-add_executable(parrot_bot main.c init_sql.h.in)
+add_executable(parrot_bot main.c init_sql.h.in vector.c)
 
 set_property(TARGET parrot_bot PROPERTY C_STANDARD 23)
 
