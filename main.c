@@ -614,17 +614,31 @@ void signal_handler(void) {
 }
 
 void cleanup(void) {
-    chan_close(g_asset_chan);
-    chan_dispose(g_asset_chan);
+    if (g_asset_chan) {
+        chan_close(g_asset_chan);
+        chan_dispose(g_asset_chan);
+    }
 
-    pthread_join(g_asset_thread, NULL);
+    if (g_asset_thread) {
+        pthread_join(g_asset_thread, NULL);
+    }
 
-    sqlite3_close(g_database);
+    if (g_magic) {
+        magic_close(g_magic);
+    }
 
-    discord_cleanup(g_client);
-    ccord_global_cleanup();
+    if (g_database) {
+        sqlite3_close(g_database);
+    }
 
-    pcre2_code_free(g_url_regex);
+    if (g_client) {
+        discord_cleanup(g_client);
+        ccord_global_cleanup();
+    }
+
+    if (g_url_regex) {
+        pcre2_code_free(g_url_regex);
+    }
 }
 
 int main(void) {
@@ -639,6 +653,10 @@ int main(void) {
     if (database_path == NULL) {
         database_path = "parrot_bot.db";
     }
+
+    atexit(cleanup);
+    signal(SIGTERM, (__sighandler_t)signal_handler);
+    signal(SIGINT, (__sighandler_t)signal_handler);
 
     PCRE2_SPTR url_pattern = (PCRE2_SPTR) "(?:https?:\\/\\/)\\S+";
 
@@ -677,10 +695,6 @@ int main(void) {
 
         return 1;
     }
-
-    atexit(cleanup);
-    signal(SIGTERM, (__sighandler_t)signal_handler);
-    signal(SIGINT, (__sighandler_t)signal_handler);
 
     g_client = discord_init(bot_token);
 
