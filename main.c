@@ -1,16 +1,23 @@
+// Because portable code is for pussies.
+#define _GNU_SOURCE
+#define PCRE2_CODE_UNIT_WIDTH 8
+
 #include <assert.h>
+#include <chan/chan.h>
 #include <concord/discord.h>
+#include <errno.h>
+#include <magic.h>
+#include <openssl/sha.h>
+#include <pcre2.h>
 #include <signal.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "vector.h"
-
-#define PCRE2_CODE_UNIT_WIDTH 8
-#include <pcre2.h>
-
+#include <sys/stat.h>
+#include "download.h"
 #include "init_sql.h"
+#include "vector.h"
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
@@ -19,21 +26,48 @@
 
 #define DISCORD_CUSTOM_ID_LENGTH (100 + 1)
 
+#define SHA256_OUTPUT_LENGTH (SHA256_DIGEST_LENGTH * 2 + 1)
+
 sqlite3* g_database;
 struct discord* g_client;
 pcre2_code* g_url_regex;
+chan_t* g_asset_chan;
+
+struct asset {
+    char* key;
+    char* value;
+};
+
+void sha256(unsigned char* data,
+            size_t data_length,
+            char outputBuffer[SHA256_OUTPUT_LENGTH]) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+
+    SHA256_CTX sha256 = {0};
+
+    SHA256_Init(&sha256);
+    SHA256_Update(&sha256, data, data_length);
+    SHA256_Final(hash, &sha256);
+
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        sprintf(outputBuffer + (i * 2), "%02x", hash[i]);
+    }
+    outputBuffer[SHA256_OUTPUT_LENGTH - 1] = 0;
+}
+
+struct match {
+    PCRE2_SIZE start, end;
+};
 
 struct vector* regex_match(pcre2_code* regex,
                            PCRE2_SPTR subject,
                            size_t subject_length) {
-#define APPEND_RESULT(i)                                                \
-    {                                                                   \
-        PCRE2_SPTR substring_start = subject + matches_vector[2 * (i)]; \
-        size_t substring_length =                                       \
-            matches_vector[2 * (i) + 1] - matches_vector[2 * (i)];      \
-        char* substring = calloc(1, subject_length + 1);                \
-        strncpy(substring, (char*)substring_start, substring_length);   \
-        vector_push(result_vector, substring);                          \
+#define APPEND_RESULT(i)                                 \
+    {                                                    \
+        struct match* match = calloc(1, sizeof(*match)); \
+        match->start = matches_vector[2 * (i)];          \
+        match->end = matches_vector[2 * (i) + 1];        \
+        vector_push(result_vector, match);               \
     }
 
     pcre2_match_data* match_data =
@@ -186,6 +220,18 @@ void on_ready(struct discord* client, const struct discord_ready* event) {
     }
 }
 
+void process_assets(char* key, char* value) {
+    char* key_copy = strdup(key);
+    char* value_copy = strdup(value);
+
+    struct asset* asset = calloc(1, sizeof(*asset));
+
+    asset->key = key_copy;
+    asset->value = value_copy;
+
+    chan_send(g_asset_chan, asset);
+}
+
 void handle_add_response_subcommand(
     struct discord* client,
     const struct discord_interaction* event,
@@ -255,6 +301,8 @@ void handle_add_response_subcommand(
 
     discord_create_interaction_response(client, event->id, event->token,
                                         &response, NULL);
+
+    process_assets(key, value);
 }
 
 void handle_responses_interaction(struct discord* client,
@@ -434,6 +482,134 @@ void on_message(struct discord* client, const struct discord_message* event) {
     sqlite3_finalize(select_statement);
 }
 
+static int maybe_mkdir(const char* path) {
+    errno = 0;
+
+    if (mkdir(path, 0777) == 0) {
+        return 0;
+    }
+
+    if (errno != EEXIST) {
+        return -1;
+    }
+
+    struct stat st;
+
+    if (stat(path, &st) != 0) {
+        return -1;
+    }
+
+    if (!S_ISDIR(st.st_mode)) {
+        errno = ENOTDIR;
+        return -1;
+    }
+
+    errno = 0;
+
+    return 0;
+}
+
+int mkdir_p(const char* path) {
+    int result = -1;
+
+    errno = 0;
+
+    char* mutable_path = strdup(path);
+    if (mutable_path == NULL) {
+        goto cleanup;
+    }
+
+    for (char* p = mutable_path + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+
+            if (maybe_mkdir(mutable_path) != 0) {
+                goto cleanup;
+            }
+
+            *p = '/';
+        }
+    }
+
+    if (maybe_mkdir(mutable_path) != 0) {
+        goto cleanup;
+    }
+
+    result = 0;
+
+cleanup:
+    free(mutable_path);
+
+    return result;
+}
+
+void process_matches(struct asset* asset, struct vector* matches) {
+    magic_t cookie = magic_open(MAGIC_EXTENSION);
+    magic_load(cookie, NULL);
+
+    for (int i = 0; i < matches->size; ++i) {
+        struct match* match = matches->data[i];
+
+        size_t length = match->end - match->start;
+
+        char* url = strndup(asset->value + match->start, length);
+
+        struct download_buffer* file_buffer = download_file(url);
+
+        const char* extension =
+            magic_buffer(cookie, file_buffer->memory, file_buffer->size);
+        char* extension_end = strchrnul(extension, '/');
+
+        char file_hash[SHA256_OUTPUT_LENGTH];
+        sha256(file_buffer->memory, file_buffer->size, file_hash);
+
+        char target_path[PATH_MAX];
+        sprintf(target_path, "%.2s/%.2s", file_hash, file_hash + 2);
+
+        mkdir_p(target_path);
+
+        sprintf(target_path + strlen(target_path), "/%s.%.*s", file_hash,
+                (int)(extension_end - extension), extension);
+
+        FILE* file_handle = fopen(target_path, "wb");
+        fwrite(file_buffer->memory, sizeof(*file_buffer->memory),
+               file_buffer->size, file_handle);
+
+        fclose(file_handle);
+
+        download_buffer_destroy(file_buffer);
+        free(url);
+    }
+
+    magic_close(cookie);
+    vector_destroy(matches);
+}
+
+void* process_assets_thread(void*) {
+    for (;;) {
+        struct asset* asset;
+
+        int result = chan_recv(g_asset_chan, (void**)&asset);
+        if (result < 0) {
+            break;
+        }
+
+        struct vector* matches = regex_match(
+            g_url_regex, (PCRE2_SPTR)asset->value, strlen(asset->value));
+
+        if (matches != NULL) {
+            process_matches(asset, matches);
+        }
+
+        free(asset->key);
+        free(asset->value);
+
+        free(asset);
+    }
+
+    return NULL;
+}
+
 void signal_handler(void) {
     exit(0);
 }
@@ -445,6 +621,9 @@ void cleanup(void) {
     ccord_global_cleanup();
 
     pcre2_code_free(g_url_regex);
+
+    chan_close(g_asset_chan);
+    chan_dispose(g_asset_chan);
 }
 
 int main(void) {
@@ -468,6 +647,11 @@ int main(void) {
     g_url_regex = pcre2_compile(url_pattern, PCRE2_ZERO_TERMINATED, 0,
                                 &error_number, &error_offset, NULL);
     assert(g_url_regex != NULL);
+
+    g_asset_chan = chan_init(0);
+
+    pthread_t asset_thread;
+    pthread_create(&asset_thread, NULL, process_assets_thread, NULL);
 
     int result = sqlite3_open(database_path, &g_database);
     if (result != SQLITE_OK) {
