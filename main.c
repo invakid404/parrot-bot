@@ -34,6 +34,7 @@ pcre2_code* g_url_regex;
 
 pthread_t g_asset_thread;
 chan_t* g_asset_chan;
+magic_t g_magic;
 
 struct asset {
     char* key;
@@ -546,9 +547,6 @@ cleanup:
 }
 
 void process_matches(struct asset* asset, struct vector* matches) {
-    magic_t cookie = magic_open(MAGIC_EXTENSION);
-    magic_load(cookie, NULL);
-
     for (int i = 0; i < matches->size; ++i) {
         struct match* match = matches->data[i];
 
@@ -559,7 +557,7 @@ void process_matches(struct asset* asset, struct vector* matches) {
         struct download_buffer* file_buffer = download_file(url);
 
         const char* extension =
-            magic_buffer(cookie, file_buffer->memory, file_buffer->size);
+            magic_buffer(g_magic, file_buffer->memory, file_buffer->size);
         char* extension_end = strchrnul(extension, '/');
 
         char file_hash[SHA256_OUTPUT_LENGTH];
@@ -583,7 +581,6 @@ void process_matches(struct asset* asset, struct vector* matches) {
         free(url);
     }
 
-    magic_close(cookie);
     vector_destroy(matches);
 }
 
@@ -654,9 +651,17 @@ int main(void) {
 
     g_asset_chan = chan_init(0);
 
+    g_magic = magic_open(MAGIC_EXTENSION);
+    int result = magic_load(g_magic, NULL);
+    if (result < 0) {
+        fprintf(stderr, "failed to load magic database: %s\n", magic_error(g_magic));
+
+        return 1;
+    }
+
     pthread_create(&g_asset_thread, NULL, process_assets_thread, NULL);
 
-    int result = sqlite3_open(database_path, &g_database);
+    result = sqlite3_open(database_path, &g_database);
     if (result != SQLITE_OK) {
         fprintf(stderr, "failed to open database: %s\n",
                 sqlite3_errstr(result));
