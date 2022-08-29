@@ -31,6 +31,8 @@
 sqlite3* g_database;
 struct discord* g_client;
 pcre2_code* g_url_regex;
+
+pthread_t g_asset_thread;
 chan_t* g_asset_chan;
 
 struct asset {
@@ -615,15 +617,17 @@ void signal_handler(void) {
 }
 
 void cleanup(void) {
+    chan_close(g_asset_chan);
+    chan_dispose(g_asset_chan);
+
+    pthread_join(g_asset_thread, NULL);
+
     sqlite3_close(g_database);
 
     discord_cleanup(g_client);
     ccord_global_cleanup();
 
     pcre2_code_free(g_url_regex);
-
-    chan_close(g_asset_chan);
-    chan_dispose(g_asset_chan);
 }
 
 int main(void) {
@@ -650,8 +654,7 @@ int main(void) {
 
     g_asset_chan = chan_init(0);
 
-    pthread_t asset_thread;
-    pthread_create(&asset_thread, NULL, process_assets_thread, NULL);
+    pthread_create(&g_asset_thread, NULL, process_assets_thread, NULL);
 
     int result = sqlite3_open(database_path, &g_database);
     if (result != SQLITE_OK) {
