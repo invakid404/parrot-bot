@@ -6,12 +6,12 @@
 #include <stdlib.h>
 
 struct vector {
-    char** data;
+    void** data;
     size_t size, capacity;
 };
 
 struct vector* vector_create();
-void vector_push(struct vector* vector, char* value);
+void vector_push(struct vector* vector, void* value);
 void vector_destroy(struct vector* vector);
 
 #endif  // PARROT_BOT_VECTOR_H

@@ -9,7 +9,7 @@ struct vector* vector_create() {
     return vector;
 }
 
-void vector_push(struct vector* vector, char* value) {
+void vector_push(struct vector* vector, void* value) {
     if (vector->size >= vector->capacity) {
         vector->capacity *= 2;
         vector->data = realloc(vector->data, vector->capacity);
