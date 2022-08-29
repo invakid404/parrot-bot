@@ -272,13 +272,10 @@ void handle_add_response_subcommand(
         "INSERT INTO `responses` (`key`, `value`) VALUES (?, ?)";
 
     sqlite3_stmt* insert_statement;
-    sqlite3_prepare_v2(g_database, insert_query, (int)strlen(insert_query),
-                       &insert_statement, NULL);
+    sqlite3_prepare_v2(g_database, insert_query, -1, &insert_statement, NULL);
 
-    sqlite3_bind_text(insert_statement, 1, key, (int)strlen(key),
-                      SQLITE_STATIC);
-    sqlite3_bind_text(insert_statement, 2, value, (int)strlen(value),
-                      SQLITE_STATIC);
+    sqlite3_bind_text(insert_statement, 1, key, -1, SQLITE_STATIC);
+    sqlite3_bind_text(insert_statement, 2, value, -1, SQLITE_STATIC);
 
     int result = sqlite3_step(insert_statement);
 
@@ -326,8 +323,8 @@ void handle_responses_interaction(struct discord* client,
         "SELECT `key` FROM `responses` LIMIT ? OFFSET ?";
 
     sqlite3_stmt* get_page_statement;
-    sqlite3_prepare_v2(g_database, get_page_query, (int)strlen(get_page_query),
-                       &get_page_statement, NULL);
+    sqlite3_prepare_v2(g_database, get_page_query, -1, &get_page_statement,
+                       NULL);
 
     sqlite3_bind_int(get_page_statement, 1, PAGE_SIZE);
     sqlite3_bind_int(get_page_statement, 2, page * PAGE_SIZE);
@@ -475,11 +472,9 @@ void on_message(struct discord* client, const struct discord_message* event) {
         "SELECT `value` FROM `responses` WHERE `key` = ?";
 
     sqlite3_stmt* select_statement;
-    sqlite3_prepare_v2(g_database, select_query, (int)strlen(select_query),
-                       &select_statement, NULL);
+    sqlite3_prepare_v2(g_database, select_query, -1, &select_statement, NULL);
 
-    sqlite3_bind_text(select_statement, 1, event->content,
-                      (int)strlen(event->content), SQLITE_STATIC);
+    sqlite3_bind_text(select_statement, 1, event->content, -1, SQLITE_STATIC);
 
     int result = sqlite3_step(select_statement);
     if (result == SQLITE_ROW) {
@@ -613,23 +608,24 @@ void process_matches(struct asset* asset, struct vector* matches) {
     }
 
     sqlite3* transaction;
-    assert(sqlite3_open(g_database_path, &transaction) == SQLITE_OK);
+    sqlite3_open(g_database_path, &transaction);
 
     sqlite3_exec(transaction, "BEGIN TRANSACTION;", NULL, NULL, NULL);
 
-    char* replace_sql =
-        "UPDATE `responses` SET `value` = REPLACE(`value`, ?, ?) WHERE `key` = ?;";
-    for (int i = 0; i < shlen(url_map); ++i) {
-        sqlite3_stmt* insert_statement;
-        sqlite3_prepare_v2(transaction, replace_sql, (int)strlen(replace_sql),
-                           &insert_statement, NULL);
+    const char* replace_sql =
+        "UPDATE `responses` SET `value` = REPLACE(`value`, ?1, ?2) WHERE `key` "
+        "= ?3;";
 
-        sqlite3_bind_text(insert_statement, 1, url_map[i].key,
-                          (int)strlen(url_map[i].key), SQLITE_STATIC);
-        sqlite3_bind_text(insert_statement, 2, url_map[i].value,
-                          (int)strlen(url_map[i].value), SQLITE_STATIC);
-        sqlite3_bind_text(insert_statement, 3, asset->key,
-                          (int)strlen(asset->key), SQLITE_STATIC);
+    for (int i = 0; i < shlen(url_map); ++i) {
+        sqlite3_stmt* insert_statement = {0};
+        sqlite3_prepare_v2(transaction, replace_sql, -1, &insert_statement,
+                           NULL);
+
+        sqlite3_bind_text(insert_statement, 1, url_map[i].key, -1,
+                          SQLITE_STATIC);
+        sqlite3_bind_text(insert_statement, 2, url_map[i].value, -1,
+                          SQLITE_STATIC);
+        sqlite3_bind_text(insert_statement, 3, asset->key, -1, SQLITE_STATIC);
 
         sqlite3_step(insert_statement);
 
@@ -637,6 +633,7 @@ void process_matches(struct asset* asset, struct vector* matches) {
     }
 
     sqlite3_exec(transaction, "COMMIT;", NULL, NULL, NULL);
+
     sqlite3_close(transaction);
 
     shfree(url_map);
