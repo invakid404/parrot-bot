@@ -598,7 +598,7 @@ void process_matches(struct asset* asset, struct vector* matches) {
             fclose(file_handle);
         }
 
-        char target_url[PATH_MAX];
+        char* target_url = calloc(PATH_MAX, sizeof(*target_url));
         sprintf(target_url, "%s/%s", g_base_url, target_path);
 
         shput(url_map, url, target_url);
@@ -630,6 +630,8 @@ void process_matches(struct asset* asset, struct vector* matches) {
         sqlite3_step(insert_statement);
 
         sqlite3_finalize(insert_statement);
+
+        free(url_map[i].value);
     }
 
     sqlite3_exec(transaction, "COMMIT;", NULL, NULL, NULL);
