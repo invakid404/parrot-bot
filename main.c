@@ -29,11 +29,15 @@
 #define SHA256_OUTPUT_LENGTH (SHA256_DIGEST_LENGTH * 2 + 1)
 
 sqlite3* g_database;
+
 struct discord* g_client;
+
 pcre2_code* g_url_regex;
 
 pthread_t g_asset_thread;
 chan_t* g_asset_chan;
+char* g_asset_path;
+
 magic_t g_magic;
 
 struct asset {
@@ -564,7 +568,7 @@ void process_matches(struct asset* asset, struct vector* matches) {
         sha256(file_buffer->memory, file_buffer->size, file_hash);
 
         char target_path[PATH_MAX];
-        sprintf(target_path, "%.2s/%.2s", file_hash, file_hash + 2);
+        sprintf(target_path, "%s/%.2s/%.2s", g_asset_path, file_hash, file_hash + 2);
 
         mkdir_p(target_path);
 
@@ -652,6 +656,11 @@ int main(void) {
     char* database_path = getenv("PARROT_BOT_DATABASE_PATH");
     if (database_path == NULL) {
         database_path = "parrot_bot.db";
+    }
+
+    g_asset_path = getenv("PARROT_BOT_ASSET_PATH");
+    if (g_asset_path == NULL) {
+        g_asset_path = "data";
     }
 
     atexit(cleanup);
