@@ -1,6 +1,7 @@
 // Because portable code is for pussies.
 #define _GNU_SOURCE
 #define PCRE2_CODE_UNIT_WIDTH 8
+#define STB_DS_IMPLEMENTATION
 
 #include <assert.h>
 #include <chan/chan.h>
@@ -11,10 +12,12 @@
 #include <pcre2.h>
 #include <signal.h>
 #include <sqlite3.h>
+#include <stb_ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "download.h"
 #include "init_sql.h"
 #include "vector.h"
@@ -28,6 +31,7 @@
 
 #define SHA256_OUTPUT_LENGTH (SHA256_DIGEST_LENGTH * 2 + 1)
 
+char* g_database_path;
 sqlite3* g_database;
 
 struct discord* g_client;
@@ -37,6 +41,8 @@ pcre2_code* g_url_regex;
 pthread_t g_asset_thread;
 chan_t* g_asset_chan;
 char* g_asset_path;
+
+char* g_base_url;
 
 magic_t g_magic;
 
@@ -551,12 +557,25 @@ cleanup:
 }
 
 void process_matches(struct asset* asset, struct vector* matches) {
+    struct {
+        char* key;
+        char* value;
+    }* url_map = NULL;
+    sh_new_arena(url_map);
+
     for (int i = 0; i < matches->size; ++i) {
         struct match* match = matches->data[i];
 
         size_t length = match->end - match->start;
 
         char* url = strndup(asset->value + match->start, length);
+
+        char* result = shget(url_map, url);
+        if (result != NULL) {
+            free(url);
+
+            continue;
+        }
 
         struct download_buffer* file_buffer = download_file(url);
 
@@ -568,24 +587,59 @@ void process_matches(struct asset* asset, struct vector* matches) {
         sha256(file_buffer->memory, file_buffer->size, file_hash);
 
         char target_path[PATH_MAX];
-        sprintf(target_path, "%s/%.2s/%.2s", g_asset_path, file_hash, file_hash + 2);
+        sprintf(target_path, "%s/%.2s/%.2s", g_asset_path, file_hash,
+                file_hash + 2);
 
         mkdir_p(target_path);
 
         sprintf(target_path + strlen(target_path), "/%s.%.*s", file_hash,
                 (int)(extension_end - extension), extension);
 
-        FILE* file_handle = fopen(target_path, "wb");
-        fwrite(file_buffer->memory, sizeof(*file_buffer->memory),
-               file_buffer->size, file_handle);
+        if (access(target_path, F_OK) != 0) {
+            FILE* file_handle = fopen(target_path, "wb");
+            fwrite(file_buffer->memory, sizeof(*file_buffer->memory),
+                   file_buffer->size, file_handle);
 
-        fclose(file_handle);
+            fclose(file_handle);
+        }
+
+        char target_url[PATH_MAX];
+        sprintf(target_url, "%s/%s", g_base_url, target_path);
+
+        shput(url_map, url, target_url);
 
         download_buffer_destroy(file_buffer);
         free(url);
     }
 
-    vector_destroy(matches);
+    sqlite3* transaction;
+    assert(sqlite3_open(g_database_path, &transaction) == SQLITE_OK);
+
+    sqlite3_exec(transaction, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+
+    char* replace_sql =
+        "UPDATE `responses` SET `value` = REPLACE(`value`, ?, ?) WHERE `key` = ?;";
+    for (int i = 0; i < shlen(url_map); ++i) {
+        sqlite3_stmt* insert_statement;
+        sqlite3_prepare_v2(transaction, replace_sql, (int)strlen(replace_sql),
+                           &insert_statement, NULL);
+
+        sqlite3_bind_text(insert_statement, 1, url_map[i].key,
+                          (int)strlen(url_map[i].key), SQLITE_STATIC);
+        sqlite3_bind_text(insert_statement, 2, url_map[i].value,
+                          (int)strlen(url_map[i].value), SQLITE_STATIC);
+        sqlite3_bind_text(insert_statement, 3, asset->key,
+                          (int)strlen(asset->key), SQLITE_STATIC);
+
+        sqlite3_step(insert_statement);
+
+        sqlite3_finalize(insert_statement);
+    }
+
+    sqlite3_exec(transaction, "COMMIT;", NULL, NULL, NULL);
+    sqlite3_close(transaction);
+
+    shfree(url_map);
 }
 
 void* process_assets_thread(void*) {
@@ -602,6 +656,8 @@ void* process_assets_thread(void*) {
 
         if (matches != NULL) {
             process_matches(asset, matches);
+
+            vector_destroy(matches);
         }
 
         free(asset->key);
@@ -653,14 +709,19 @@ int main(void) {
         return 1;
     }
 
-    char* database_path = getenv("PARROT_BOT_DATABASE_PATH");
-    if (database_path == NULL) {
-        database_path = "parrot_bot.db";
+    g_database_path = getenv("PARROT_BOT_DATABASE_PATH");
+    if (g_database_path == NULL) {
+        g_database_path = "parrot_bot.db";
     }
 
     g_asset_path = getenv("PARROT_BOT_ASSET_PATH");
     if (g_asset_path == NULL) {
         g_asset_path = "data";
+    }
+
+    g_base_url = getenv("PARROT_BOT_BASE_URL");
+    if (g_base_url == NULL) {
+        g_base_url = "http://localhost:8080";
     }
 
     atexit(cleanup);
@@ -681,14 +742,15 @@ int main(void) {
     g_magic = magic_open(MAGIC_EXTENSION);
     int result = magic_load(g_magic, NULL);
     if (result < 0) {
-        fprintf(stderr, "failed to load magic database: %s\n", magic_error(g_magic));
+        fprintf(stderr, "failed to load magic database: %s\n",
+                magic_error(g_magic));
 
         return 1;
     }
 
     pthread_create(&g_asset_thread, NULL, process_assets_thread, NULL);
 
-    result = sqlite3_open(database_path, &g_database);
+    result = sqlite3_open(g_database_path, &g_database);
     if (result != SQLITE_OK) {
         fprintf(stderr, "failed to open database: %s\n",
                 sqlite3_errstr(result));
