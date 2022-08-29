@@ -78,7 +78,7 @@ jobs:
             labels_args="${labels_args} --label \"${label}\""
           done
 
-          command="docker-slim build --target ${image} ${tags_args} ${labels_args} --http-probe=false --continue-after 30 --env PARROT_BOT_TOKEN=\"${bot_token}\""
+          command="docker-slim build --target ${image} --include-bin-file .github/.docker-slim-preserve ${tags_args} ${labels_args} --http-probe=false --continue-after 30 --env PARROT_BOT_TOKEN=\"${bot_token}\""
           eval " ${command}"
 
       - name: Push to GHCR
