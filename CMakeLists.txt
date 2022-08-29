@@ -23,7 +23,7 @@ add_executable(parrot_bot main.c init_sql.h.in vector.c download.c)
 
 set_property(TARGET parrot_bot PROPERTY C_STANDARD 23)
 
-add_dependencies(parrot_bot concord chan)
+add_dependencies(parrot_bot concord chan stb)
 
 target_include_directories(parrot_bot PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
@@ -32,6 +32,7 @@ target_include_directories(parrot_bot PRIVATE
         ${PCRE2_INCLUDE_DIRS}
         ${CHAN_INSTALL_DIR}/include
         ${OPENSSL_INCLUDE_DIR}
+        ${STB_INCLUDE_DIR}
         )
 
 target_link_libraries(parrot_bot PRIVATE
