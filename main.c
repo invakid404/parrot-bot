@@ -21,6 +21,7 @@
 #include "download.h"
 #include "init_sql.h"
 #include "vector.h"
+#include "s3.h"
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
@@ -40,11 +41,10 @@ pcre2_code* g_url_regex;
 
 pthread_t g_asset_thread;
 chan_t* g_asset_chan;
-char* g_asset_path;
-
-char* g_base_url;
 
 magic_t g_magic;
+
+struct s3* g_s3;
 
 struct asset {
     char* key;
@@ -490,67 +490,6 @@ void on_message(struct discord* client, const struct discord_message* event) {
     sqlite3_finalize(select_statement);
 }
 
-static int maybe_mkdir(const char* path) {
-    errno = 0;
-
-    if (mkdir(path, 0777) == 0) {
-        return 0;
-    }
-
-    if (errno != EEXIST) {
-        return -1;
-    }
-
-    struct stat st;
-
-    if (stat(path, &st) != 0) {
-        return -1;
-    }
-
-    if (!S_ISDIR(st.st_mode)) {
-        errno = ENOTDIR;
-        return -1;
-    }
-
-    errno = 0;
-
-    return 0;
-}
-
-int mkdir_p(const char* path) {
-    int result = -1;
-
-    errno = 0;
-
-    char* mutable_path = strdup(path);
-    if (mutable_path == NULL) {
-        goto cleanup;
-    }
-
-    for (char* p = mutable_path + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';
-
-            if (maybe_mkdir(mutable_path) != 0) {
-                goto cleanup;
-            }
-
-            *p = '/';
-        }
-    }
-
-    if (maybe_mkdir(mutable_path) != 0) {
-        goto cleanup;
-    }
-
-    result = 0;
-
-cleanup:
-    free(mutable_path);
-
-    return result;
-}
-
 void process_matches(struct asset* asset, struct vector* matches) {
     struct {
         char* key;
@@ -574,32 +513,20 @@ void process_matches(struct asset* asset, struct vector* matches) {
 
         struct download_buffer* file_buffer = download_file(url);
 
-        const char* extension =
+        const char* mime_type =
             magic_buffer(g_magic, file_buffer->memory, file_buffer->size);
-        char* extension_end = strchrnul(extension, '/');
 
         char file_hash[SHA256_OUTPUT_LENGTH];
         sha256(file_buffer->memory, file_buffer->size, file_hash);
 
         char target_path[PATH_MAX];
-        sprintf(target_path, "%s/%.2s/%.2s", g_asset_path, file_hash,
-                file_hash + 2);
-
-        mkdir_p(target_path);
-
-        sprintf(target_path + strlen(target_path), "/%s.%.*s", file_hash,
-                (int)(extension_end - extension), extension);
-
-        if (access(target_path, F_OK) != 0) {
-            FILE* file_handle = fopen(target_path, "wb");
-            fwrite(file_buffer->memory, sizeof(*file_buffer->memory),
-                   file_buffer->size, file_handle);
-
-            fclose(file_handle);
-        }
+        sprintf(target_path, "%.2s/%.2s/%s", file_hash,
+                file_hash + 2, file_hash);
 
         char* target_url = calloc(PATH_MAX, sizeof(*target_url));
-        sprintf(target_url, "%s/%s", g_base_url, target_path);
+        sprintf(target_url, "%s/%s/%s", g_s3->host, g_s3->bucket_name, target_path);
+
+        s3_put_object(g_s3, (char*)file_buffer->memory, file_buffer->size, target_path, (char*)mime_type);
 
         shput(url_map, url, target_url);
 
@@ -698,6 +625,10 @@ void cleanup(void) {
     if (g_url_regex) {
         pcre2_code_free(g_url_regex);
     }
+
+    if (g_s3) {
+        s3_destroy(g_s3);
+    }
 }
 
 int main(void) {
@@ -713,14 +644,32 @@ int main(void) {
         g_database_path = "parrot_bot.db";
     }
 
-    g_asset_path = getenv("PARROT_BOT_ASSET_PATH");
-    if (g_asset_path == NULL) {
-        g_asset_path = "data";
+    char* s3_host = getenv("PARROT_BOT_S3_HOST");
+    if (s3_host == NULL) {
+        fprintf(stderr, "no s3 host provided\n");
+
+        return 1;
     }
 
-    g_base_url = getenv("PARROT_BOT_BASE_URL");
-    if (g_base_url == NULL) {
-        g_base_url = "http://localhost:8080";
+    char* s3_bucket_name = getenv("PARROT_BOT_S3_BUCKET_NAME");
+    if (s3_bucket_name == NULL) {
+        fprintf(stderr, "no s3 bucket name provided\n");
+
+        return 1;
+    }
+
+    char* s3_public_key = getenv("PARROT_BOT_S3_PUBLIC_KEY");
+    if (s3_public_key == NULL) {
+        fprintf(stderr, "no s3 public key provided\n");
+
+        return 1;
+    }
+
+    char* s3_private_key = getenv("PARROT_BOT_S3_PRIVATE_KEY");
+    if (s3_private_key == NULL) {
+        fprintf(stderr, "no s3 private key provided\n");
+
+        return 1;
     }
 
     atexit(cleanup);
@@ -747,6 +696,8 @@ int main(void) {
         return 1;
     }
 
+    magic_setflags(g_magic, MAGIC_MIME);
+
     pthread_create(&g_asset_thread, NULL, process_assets_thread, NULL);
 
     result = sqlite3_open(g_database_path, &g_database);
@@ -765,6 +716,8 @@ int main(void) {
 
         return 1;
     }
+
+    g_s3 = s3_create(s3_host, s3_bucket_name, s3_public_key, s3_private_key);
 
     g_client = discord_init(bot_token);
 
