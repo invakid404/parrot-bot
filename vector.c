@@ -12,7 +12,7 @@ struct vector* vector_create() {
 void vector_push(struct vector* vector, void* value) {
     if (vector->size >= vector->capacity) {
         vector->capacity *= 2;
-        vector->data = realloc(vector->data, vector->capacity);
+        vector->data = realloc(vector->data, vector->capacity * sizeof(*vector->data));
     }
 
     vector->data[vector->size++] = value;
