@@ -23,7 +23,11 @@ struct s3* s3_create(char* host,
     return s3;
 }
 
-void s3_put_object(struct s3* s3, char* data, char* key, char* mime_type) {
+void s3_put_object(struct s3* s3,
+                   char* data,
+                   size_t data_size,
+                   char* key,
+                   char* mime_type) {
     char request[2048];
 
     struct timespec spec;
@@ -69,6 +73,7 @@ void s3_put_object(struct s3* s3, char* data, char* key, char* mime_type) {
     curl_easy_setopt(curl, CURLOPT_URL, target_url);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, data_size);
 
     struct curl_slist* headers = {0};
 
