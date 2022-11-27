@@ -10,7 +10,13 @@ keeping track of your favorite memes.
 ```bash
 $ cmake .
 $ cmake --build .
-$ PARROT_BOT_TOKEN=<TOKEN> ./parrot-bot
+$ env <<EOF ./parrot-bot
+PARROT_BOT_TOKEN=<TOKEN>
+PARROT_BOT_S3_HOST=<HOST>
+PARROT_BOT_S3_BUCKET_NAME=<BUCKET_NAME>
+PARROT_BOT_S3_PUBLIC_KEY=<PUBLIC_KEY> 
+PARROT_BOT_S3_PRIVATE_KEY=<PRIVATE_KEY>
+EOF
 ```
 
 ## Dependencies:
